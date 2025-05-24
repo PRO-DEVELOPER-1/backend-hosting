@@ -1,5 +1,5 @@
 const Docker = require('dockerode');
-const git = require('git-clone');
+const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
@@ -7,6 +7,11 @@ const { Deployment } = require('../models');
 
 const docker = new Docker();
 const PROJECTS_DIR = process.env.PROJECTS_DIR || '/tmp/bera-tech-projects';
+
+// Ensure projects directory exists
+if (!fs.existsSync(PROJECTS_DIR)) {
+  fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+}
 
 // Language-specific build configurations
 const BUILD_CONFIGS = {
@@ -36,52 +41,52 @@ COPY . /usr/share/nginx/html`,
 };
 
 async function runDeployment(project, deployment) {
+  const projectDir = path.join(PROJECTS_DIR, project.id);
+  const repoDir = path.join(projectDir, 'repo');
+  
   try {
-    const projectDir = path.join(PROJECTS_DIR, project.id);
-    const repoDir = path.join(projectDir, 'repo');
-    
-    // Ensure projects directory exists
-    if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR);
-    if (!fs.existsSync(projectDir)) fs.mkdirSync(projectDir);
-    
+    // Clean up previous deployment if exists
+    if (fs.existsSync(projectDir)) {
+      fs.rmdirSync(projectDir, { recursive: true });
+    }
+    fs.mkdirSync(projectDir, { recursive: true });
+
     // Update deployment status
     await deployment.update({ status: 'building', logs: 'Cloning repository...' });
     
-    // Clone repository
-    await new Promise((resolve, reject) => {
-      git(project.repoUrl, repoDir, { checkout: project.branch }, (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
+    // Clone repository using native git
+    execSync(`git clone --branch ${project.branch} --depth 1 ${project.repoUrl} ${repoDir}`, {
+      stdio: 'inherit'
     });
-    
+
     // Create Dockerfile if not exists
     const dockerfilePath = path.join(repoDir, 'Dockerfile');
     if (!fs.existsSync(dockerfilePath)) {
       const config = BUILD_CONFIGS[project.language] || BUILD_CONFIGS.node;
       fs.writeFileSync(dockerfilePath, config.dockerfile);
     }
-    
+
     // Build Docker image
     await deployment.update({ status: 'building', logs: 'Building Docker image...' });
     const imageName = `bera-tech-${project.id}:${deployment.id}`;
+    
     const stream = await docker.buildImage({
       context: repoDir,
       src: ['.']
     }, { t: imageName });
-    
+
     await new Promise((resolve, reject) => {
       docker.modem.followProgress(stream, (err, res) => {
         if (err) reject(err);
         else resolve(res);
       });
     });
-    
+
     // Run container
     await deployment.update({ status: 'deploying', logs: 'Starting container...' });
     const port = BUILD_CONFIGS[project.language]?.port || 3000;
     const hostPort = 40000 + Math.floor(Math.random() * 10000);
-    
+
     const container = await docker.createContainer({
       Image: imageName,
       name: `bera-tech-${project.id}-${deployment.id}`,
@@ -89,24 +94,24 @@ async function runDeployment(project, deployment) {
       HostConfig: {
         PortBindings: { [`${port}/tcp`]: [{ HostPort: `${hostPort}` }] }
     });
-    
+
     await container.start();
-    
+
     // Update deployment with URL
     const url = process.env.BASE_URL 
       ? `${process.env.BASE_URL}/proxy/${hostPort}` 
       : `http://localhost:${hostPort}`;
-    
+
     await deployment.update({
       status: 'live',
       url,
       port: hostPort,
       logs: 'Deployment successful!'
     });
-    
+
     // Update project status
     await project.update({ status: 'active' });
-    
+
   } catch (error) {
     console.error('Deployment error:', error);
     await deployment.update({
