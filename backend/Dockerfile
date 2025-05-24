@@ -1,41 +1,28 @@
-# Stage 1: Build environment
-FROM node:16 AS builder
+# Use the official Node.js 16 image
+FROM node:16
 
-# Install system dependencies including git and Docker CLI
-RUN apt-get update && apt-get install -y \
-    git \
-    python3 \
-    python3-pip \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list \
-    && apt-get update && apt-get install -y docker-ce-cli \
-    && rm -rf /var/lib/apt/lists/*
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y git python3 python3-pip && \
+    rm -rf /var/lib/apt/lists/*
 
+# Set working directory
 WORKDIR /app
 
 # Copy package files first for better caching
 COPY package*.json ./
 
-# Install npm dependencies
+# Install dependencies
 RUN npm install
 
 # Copy application files
 COPY . .
 
-# Stage 2: Runtime environment
-FROM node:16-slim
+# Build the application
+RUN npm run build
 
-WORKDIR /app
+# Expose the port
+EXPOSE 10000
 
-# Copy installed dependencies from builder
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app .
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-EXPOSE 3000
-
-CMD ["node", "index.js"]
+# Start command
+CMD ["npm", "start"]
