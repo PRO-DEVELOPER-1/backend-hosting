@@ -1,10 +1,10 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { sequelize } = require('backend/models');
-const authRoutes = require('backend/routes/auth');
-const projectRoutes = require('backend/routes/projects');
-const deploymentRoutes = require('backend/routes/deployments');
+const { sequelize } = require('.backend/models');
+const authRoutes = require('.backend/routes/auth');
+const projectRoutes = require('.backend/routes/projects');
+const deploymentRoutes = require('.backend/routes/deployments');
 
 const app = express();
 app.use(cors());
